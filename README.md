@@ -8,7 +8,7 @@ pinned: false
 ---
 
 An **OpenEnv-compatible** environment for a hackathon where an agent:
-
+<!-- rebuild trigger -->
 - reads email text
 - extracts actionable tasks
 - parses deadlines

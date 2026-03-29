@@ -1,12 +1,6 @@
-from __future__ import annotations
-
-import os
-
 from fastapi import FastAPI, HTTPException
-
 from env.environment import SmartEmailTaskCalendarEnv
 from env.models import Action, Observation
-
 
 app = FastAPI(title="Smart Email Task & Calendar Agent Environment")
 env = SmartEmailTaskCalendarEnv()
@@ -14,9 +8,7 @@ env = SmartEmailTaskCalendarEnv()
 
 @app.post("/reset", response_model=Observation)
 def reset(payload: dict | None = None):
-    task_id = None
-    if payload:
-        task_id = payload.get("task_id")
+    task_id = payload.get("task_id") if payload else None
     try:
         return env.reset(task_id=task_id)
     except Exception as e:
@@ -37,19 +29,3 @@ def step(action: Action):
 @app.get("/state")
 def state():
     return env.state()
-
-
-def main() -> None:
-    """
-    Entrypoint for OpenEnv multi-mode deployment validation.
-    """
-    import uvicorn
-
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("server.app:app", host=host, port=port, reload=False)
-
-
-if __name__ == "__main__":
-    main()
-

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyd
+*.so
+*.dll
+*.exe
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+*.log
+agent-transcripts
+terminals

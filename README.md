@@ -1,4 +1,11 @@
-# Smart Email Task & Calendar Agent Environment
+---
+title: Smart Email Agent Env
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
 
 An **OpenEnv-compatible** environment for a hackathon where an agent:
 

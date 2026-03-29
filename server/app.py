@@ -1,3 +1,4 @@
+print("APP STARTING...")
 from fastapi import FastAPI, HTTPException
 from env.environment import SmartEmailTaskCalendarEnv
 from env.models import Action, Observation

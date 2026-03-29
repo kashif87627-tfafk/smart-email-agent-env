@@ -1,0 +1,60 @@
+name: Smart Email Task & Calendar Agent Environment
+version: 0.1.0
+description: >
+  Simulated environment where an agent reads emails, extracts tasks, parses deadlines,
+  schedules tasks onto a calendar, and handles deadline updates via rescheduling.
+
+entrypoint:
+  server: server.app:app
+  environment_class: env.environment:SmartEmailTaskCalendarEnv
+
+tasks:
+  - id: easy
+    name: Easy: one task + one date
+  - id: medium
+    name: Medium: multiple tasks + deadlines
+  - id: hard
+    name: Hard: multi-step + deadline update + reschedule
+
+schemas:
+  action:
+    type: object
+    properties:
+      action:
+        type: string
+        enum:
+          - parse_email
+          - extract_deadline
+          - create_task
+          - split_task
+          - schedule_task
+          - reschedule_task
+          - noop
+      params:
+        type: object
+    required: [action]
+  observation:
+    type: object
+    properties:
+      email_text: { type: string }
+      extracted_tasks: { type: array }
+      deadlines: { type: array }
+      calendar: { type: array }
+      current_date: { type: string }
+      last_action: { type: string }
+      last_action_error: { type: boolean }
+    required:
+      - email_text
+      - extracted_tasks
+      - deadlines
+      - calendar
+      - current_date
+      - last_action
+      - last_action_error
+  reward:
+    type: object
+    properties:
+      value: { type: number }
+      components: { type: object }
+    required: [value, components]
+

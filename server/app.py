@@ -1,5 +1,9 @@
-print("APP STARTING...")
+from __future__ import annotations
+
+import os
+
 from fastapi import FastAPI, HTTPException
+
 from env.environment import SmartEmailTaskCalendarEnv
 from env.models import Action, Observation
 
@@ -30,3 +34,18 @@ def step(action: Action):
 @app.get("/state")
 def state():
     return env.state()
+
+
+def main() -> None:
+    """
+    Entrypoint for OpenEnv / Spaces style deployments.
+    """
+    import uvicorn
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "7860"))
+    uvicorn.run("server.app:app", host=host, port=port, reload=False)
+
+
+if __name__ == "__main__":
+    main()

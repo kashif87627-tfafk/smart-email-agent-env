@@ -4,9 +4,9 @@ emoji: 🤖
 colorFrom: blue
 colorTo: purple
 sdk: docker
+app_port: 7860
 pinned: false
 ---
-
 An **OpenEnv-compatible** environment for a hackathon where an agent:
 <!-- rebuild trigger -->
 - reads email text

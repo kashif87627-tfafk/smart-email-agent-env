@@ -3,12 +3,23 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 
 from env.environment import SmartEmailTaskCalendarEnv
 from env.models import Action, Observation
 
 app = FastAPI(title="Smart Email Task & Calendar Agent Environment")
 env = SmartEmailTaskCalendarEnv()
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 
 @app.post("/reset", response_model=Observation)

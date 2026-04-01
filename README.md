@@ -7,16 +7,26 @@ sdk: docker
 app_port: 7860
 pinned: false
 ---
-An **OpenEnv-compatible** environment for a hackathon where an agent:
-<!-- rebuild trigger -->
-- reads email text
-- extracts actionable tasks
-- parses deadlines
-- splits tasks into subtasks
-- schedules tasks onto a calendar
-- handles deadline updates via rescheduling
 
-This repo includes a FastAPI server (`/reset`, `/step`, `/state`), three tasks (easy/medium/hard), deterministic graders, and an `inference.py` runner that can use the OpenAI client (with a baseline fallback so the project is runnable without keys).
+## Smart Email Task & Calendar Agent Environment
+
+This is a **fully runnable OpenEnv-compatible environment** for a hackathon. It simulates how an agent:
+
+- reads email text
+- extracts tasks
+- parses deadlines (e.g., “15 April 2026”)
+- splits complex tasks into subtasks
+- schedules tasks onto a calendar
+- reacts to deadline updates by rescheduling
+
+It ships with:
+
+- **FastAPI server**: `POST /reset`, `POST /step`, `GET /state` (plus `GET /` and `GET /healthz`)
+- **3 tasks**: easy / medium / hard
+- **deterministic graders** (score \(0.0\)–\(1.0\))
+- **inference runner** (`inference.py`) that can use the OpenAI SDK or a deterministic baseline
+
+If you’re a judge: start at **“Quick demo”** and **“API usage”** below.
 
 ## Environment design
 
@@ -32,7 +42,26 @@ Internal state tracked:
 - **deadlines**: parsed per-task deadlines (source: email/update)
 - **calendar**: scheduled calendar events
 
-Time advances deterministically by **+1 day per step** to enable deadline-miss penalties.
+Time advances deterministically by **+1 day per step** to enable deadline-miss penalties (and to make grading deterministic).
+
+## Quick demo (local)
+
+From `smart-email-agent-env/`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python -m uvicorn server.app:app --host 127.0.0.1 --port 8000
+```
+
+In another terminal:
+
+```bash
+python inference.py --api-base http://127.0.0.1:8000
+```
+
+You should see printed scores for `easy`, `medium`, and `hard`.
 
 ## Action space
 
@@ -46,7 +75,19 @@ Actions are strings (Pydantic enum in `env/models.py`):
 - `reschedule_task`
 - `noop`
 
-Each action accepts an optional `params` dict (e.g. `task_id`, `task_title`, `new_due_date`, `start_date`).
+Each action accepts a `params` dict.
+
+- **Important**: `schedule_task` and `reschedule_task` need a target task via `params.task_id` or `params.task_title`.
+
+### What each action does (in this environment)
+
+- **`create_task`**: extracts top-level tasks from the current email (this is “task extraction”)
+- **`extract_deadline`**: parses deadline(s) from the current email and attaches them to tasks
+- **`split_task`**: creates subtasks for a task (hard task uses numbered items in the email)
+- **`schedule_task`**: adds a calendar event for the given task (defaults to a 1-day event on the current date)
+- **`parse_email`**: moves to the **next email** in the task (used for the hard task’s update email)
+- **`reschedule_task`**: updates due date and calendar event timing after a deadline update
+- **`noop`**: no operation
 
 ## Observation space
 
@@ -96,28 +137,32 @@ Scoring checks:
 - calendar contains scheduled items with correct due dates
 - hard task additionally checks subtasks + that the update email was seen
 
+## API usage (FastAPI)
+
+Open `/docs` for interactive testing.
+
+Typical sequence (medium task):
+
+- `POST /reset` with `{ "task_id": "medium" }`
+- `POST /step` with `{ "action": "create_task", "params": {} }`
+- `POST /step` with `{ "action": "extract_deadline", "params": {} }`
+- `POST /step` with `{ "action": "schedule_task", "params": { "task_id": "<id from observation.extracted_tasks>" } }` (repeat per task)
+
+Hard task update sequence adds:
+
+- `POST /step` with `{ "action": "parse_email", "params": {} }` to load the update email
+- `POST /step` with `{ "action": "extract_deadline", "params": {} }`
+- `POST /step` with `{ "action": "reschedule_task", "params": { "task_id": "<id>", "new_due_date": "2026-04-22" } }`
+
 ## Running locally
 
-From `smart-email-agent-env/`:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn server.app:app --reload
-```
-
-In a second terminal:
-
-```bash
-python inference.py
-```
+See **Quick demo** above.
 
 ### OpenAI-powered inference (optional)
 
 `inference.py` reads:
 
-- `API_BASE_URL` (also used for OpenAI base_url if provided)
+- `API_BASE_URL` (for the environment server; `--api-base` overrides this)
 - `MODEL_NAME`
 - `HF_TOKEN` (read for compatibility; not required by this baseline)
 - `OPENAI_API_KEY`
@@ -128,7 +173,7 @@ If `OPENAI_API_KEY` is not set, `inference.py` automatically uses a deterministi
 
 ```bash
 docker build -t smart-email-agent-env .
-docker run -p 8000:8000 smart-email-agent-env
+docker run -p 7860:7860 -e PORT=7860 smart-email-agent-env
 ```
 
 ## Baseline results
@@ -136,6 +181,6 @@ docker run -p 8000:8000 smart-email-agent-env
 The built-in baseline policy is designed to solve all three tasks, so you should typically see near-perfect scores when running:
 
 ```bash
-python inference.py
+python inference.py --api-base http://127.0.0.1:8000
 ```
 

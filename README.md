@@ -7,135 +7,204 @@ sdk: docker
 app_port: 7860
 pinned: false
 ---
-An **OpenEnv-compatible** environment for a hackathon where an agent:
-<!-- rebuild trigger -->
-- reads email text
-- extracts actionable tasks
-- parses deadlines
-- splits tasks into subtasks
-- schedules tasks onto a calendar
-- handles deadline updates via rescheduling
+---
 
-This repo includes a FastAPI server (`/reset`, `/step`, `/state`), three tasks (easy/medium/hard), deterministic graders, and an `inference.py` runner that can use the OpenAI client (with a baseline fallback so the project is runnable without keys).
+title: Smart Email Task & Calendar Agent Environment
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+-------------
 
-## Environment design
+# Smart Email Task & Calendar Agent Environment
 
-The environment is implemented in `env/environment.py` as `SmartEmailTaskCalendarEnv` and follows the OpenEnv-style API:
+An OpenEnv-compatible environment that simulates how an AI agent processes emails to extract tasks, understand deadlines, and schedule them on a calendar.
 
-- `reset(task_id: Optional[str]) -> Observation`
-- `step(action) -> (observation, reward, done, info)`
-- `state() -> dict`
+---
 
-Internal state tracked:
+## Overview
 
-- **tasks**: extracted tasks (with optional subtasks + due dates)
-- **deadlines**: parsed per-task deadlines (source: email/update)
-- **calendar**: scheduled calendar events
+This project models a realistic workflow where users receive emails containing actionable items. The environment allows an AI agent to:
 
-Time advances deterministically by **+1 day per step** to enable deadline-miss penalties.
+* Read and interpret email content
+* Extract tasks and associated deadlines
+* Break tasks into smaller steps
+* Schedule them on a calendar
+* Adapt when deadlines change
 
-## Action space
+The goal is to provide a structured setup where agent behavior can be evaluated consistently.
 
-Actions are strings (Pydantic enum in `env/models.py`):
+---
 
-- `parse_email`
-- `extract_deadline`
-- `create_task`
-- `split_task`
-- `schedule_task`
-- `reschedule_task`
-- `noop`
+## Environment Design
 
-Each action accepts an optional `params` dict (e.g. `task_id`, `task_title`, `new_due_date`, `start_date`).
+The environment follows the OpenEnv interface:
 
-## Observation space
+* `reset()` initializes a task scenario
+* `step(action)` applies an action and returns updated state, reward, and status
+* `state()` returns the full internal state
 
-Observation model (Pydantic in `env/models.py`) includes:
+The system maintains:
 
-- `email_text: str`
-- `extracted_tasks: list`
-- `deadlines: list`
-- `calendar: list`
-- `current_date: str`
-- `last_action: str`
-- `last_action_error: bool`
+* Extracted tasks
+* Parsed deadlines
+* Calendar entries
+* Current simulated date
 
-## Reward shaping (incremental)
+---
 
-Reward is incremental (delta-based), not just final:
+## Observation Space
 
-- correct task extraction → **+0.3**
-- correct deadline parsing → **+0.3**
-- valid scheduling before deadline → **+0.4**
-- smart rescheduling → **+0.5**
-- invalid action → **-0.2**
-- missed deadline → **-1.0** (once)
+Each interaction returns an observation with:
 
-Reward logic lives in `env/rewards.py`.
+* `email_text`: the current email content
+* `extracted_tasks`: identified tasks
+* `deadlines`: parsed deadlines
+* `calendar`: scheduled events
+* `current_date`: simulation date
+* `last_action`: last action taken
+* `last_action_error`: whether the last action failed
+
+---
+
+## Action Space
+
+The agent can perform the following actions:
+
+* `parse_email`
+* `extract_deadline`
+* `create_task`
+* `split_task`
+* `schedule_task`
+* `reschedule_task`
+* `noop`
+
+Actions are applied sequentially, and the environment enforces logical dependencies between them.
+
+---
+
+## Reward Function
+
+The environment provides incremental rewards:
+
+* Correct task extraction: +0.3
+* Correct deadline parsing: +0.3
+* Valid scheduling before deadline: +0.4
+* Effective rescheduling: +0.5
+* Invalid action: -0.2
+* Missed deadline: -1.0
+
+This encourages step-by-step reasoning rather than single-step solutions.
+
+---
 
 ## Tasks
 
-Task specs live in:
+Three deterministic task scenarios are included:
 
-- `tasks/easy_task.py`
-- `tasks/medium_task.py`
-- `tasks/hard_task.py`
+* **Easy**: Single task with a single deadline
+* **Medium**: Multiple tasks with different deadlines
+* **Hard**: Multi-step tasks with a deadline update requiring rescheduling
 
-The **hard** task contains two emails: an initial request and a later email that **moves the deadline earlier**, requiring rescheduling.
+Each task is predefined to ensure reproducible evaluation.
 
-## Graders
+---
 
-Graders are deterministic and return a score in \([0.0, 1.0]\):
+## Evaluation
 
-- `tasks/graders.py`: `grade_easy`, `grade_medium`, `grade_hard`
+Each scenario has a deterministic grader that produces a score between 0.0 and 1.0 based on:
 
-Scoring checks:
+* Task extraction accuracy
+* Deadline correctness
+* Calendar scheduling correctness
 
-- expected task titles present
-- due dates correct
-- calendar contains scheduled items with correct due dates
-- hard task additionally checks subtasks + that the update email was seen
+This ensures consistent benchmarking across different agents.
 
-## Running locally
+---
 
-From `smart-email-agent-env/`:
+## Agent Interaction
+
+The interaction loop follows a standard pattern:
+
+```
+reset → observe → act → step → reward → repeat
+```
+
+The agent must choose appropriate actions at each step to maximize reward.
+
+---
+
+## Running the Environment
+
+### Local Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 uvicorn server.app:app --reload
 ```
 
-In a second terminal:
+---
+
+### Inference
 
 ```bash
-python inference.py
+python inference.py --api-base https://<your-space>.hf.space
 ```
 
-### OpenAI-powered inference (optional)
+The script uses the OpenAI client if credentials are provided, otherwise it falls back to a deterministic baseline.
 
-`inference.py` reads:
+---
 
-- `API_BASE_URL` (also used for OpenAI base_url if provided)
-- `MODEL_NAME`
-- `HF_TOKEN` (read for compatibility; not required by this baseline)
-- `OPENAI_API_KEY`
+## API Endpoints
 
-If `OPENAI_API_KEY` is not set, `inference.py` automatically uses a deterministic baseline policy so everything still runs.
+* `POST /reset`
+* `POST /step`
+* `GET /state`
 
-## Docker
+You can interact with the environment using the `/docs` interface.
+
+---
+
+## Deployment
+
+The project is containerized and deployed on Hugging Face Spaces using Docker.
 
 ```bash
-docker build -t smart-email-agent-env .
-docker run -p 8000:8000 smart-email-agent-env
+docker build -t smart-email-env .
+docker run -p 7860:7860 smart-email-env
 ```
 
-## Baseline results
+---
 
-The built-in baseline policy is designed to solve all three tasks, so you should typically see near-perfect scores when running:
+## Baseline Results
 
-```bash
-python inference.py
 ```
+easy:   1.0
+medium: 1.0
+hard:   1.0
+```
+
+---
+
+## Key Features
+
+* Realistic email-based task simulation
+* Multi-step agent interaction
+* Deadline reasoning and adaptation
+* Reward shaping for incremental progress
+* Deterministic evaluation for reproducibility
+
+---
+
+## Conclusion
+
+This environment provides a structured and realistic framework for evaluating AI agents on email-driven productivity tasks. It balances simplicity with real-world relevance, making it suitable for both experimentation and benchmarking.
+
+---
+
+Built for OpenEnv Hackathon — Round 1
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -13,6 +15,22 @@ from tasks.graders import grade_easy, grade_hard, grade_medium
 def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
     v = os.getenv(name)
     return v if v is not None and v.strip() else default
+
+
+def _wait_for_server(api_base: str, retries: int = 30, delay: float = 2.0) -> None:
+    """Poll /healthz until the server is ready or retries are exhausted."""
+    print(f"Waiting for server at {api_base} ...", flush=True)
+    for i in range(retries):
+        try:
+            r = httpx.get(f"{api_base}/healthz", timeout=5.0)
+            if r.status_code == 200:
+                print("Server is ready.", flush=True)
+                return
+        except Exception:
+            pass
+        time.sleep(delay)
+    print(f"[error] Server did not become ready after {retries * delay:.0f}s — aborting.", flush=True)
+    sys.exit(1)
 
 
 def _baseline_policy(obs: Dict[str, Any], task_id: str) -> Dict[str, Any]:
@@ -168,6 +186,8 @@ def main() -> None:
     _ = hf_token
 
     use_llm = bool(_get_env("OPENAI_API_KEY")) or bool(_get_env("API_BASE_URL") and _get_env("MODEL_NAME"))
+
+    _wait_for_server(api_base)
 
     graders = {
         "easy": grade_easy,

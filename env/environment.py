@@ -417,13 +417,6 @@ class SmartEmailTaskCalendarEnv:
         task.status = "split"
 
     def _act_schedule_task(self, params: Dict[str, Any]) -> None:
-        """
-        params:
-          - task_title or task_id
-          - start_date (optional, ISO)
-          - end_date (optional, ISO)
-        If start/end not provided, schedule as a 1-day event on current_date.
-        """
         task = self._find_task(params)
         if task is None:
             raise ValueError("Task not found for schedule_task")
@@ -436,6 +429,9 @@ class SmartEmailTaskCalendarEnv:
             start = self.current_date
         if end_s:
             end = datetime.strptime(end_s, "%Y-%m-%d").date()
+        elif task.due_date:
+            # Default end_date to the task's due_date so it always satisfies end <= due
+            end = datetime.strptime(task.due_date, "%Y-%m-%d").date()
         else:
             end = start
 

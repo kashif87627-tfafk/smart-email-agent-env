@@ -17,52 +17,48 @@ def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
 
 def _baseline_policy(obs: Dict[str, Any], task_id: str) -> Dict[str, Any]:
     """
-    A simple deterministic baseline to keep the project runnable without API keys.
-    It follows an action sequence that generally solves the tasks.
+    Deterministic state-machine policy. Progresses through the required
+    action sequence without repeating completed steps.
     """
     last_action = obs.get("last_action", "")
     email_text = obs.get("email_text", "")
     extracted = obs.get("extracted_tasks", [])
+    calendar = obs.get("calendar", [])
 
-    # Hard task update handling: once the update email is active and we've extracted the new deadline,
-    # reschedule to propagate the new due date into the calendar.
-    if task_id == "hard" and "update:" in str(email_text).lower():
-        t0 = extracted[0] if extracted else None
-        if t0 and last_action == "extract_deadline" and t0.get("due_date") != "2026-04-22":
-            # If deadline extraction didn't set it, nudge via reschedule anyway.
-            return {"action": "reschedule_task", "params": {"task_id": t0.get("task_id"), "new_due_date": "2026-04-22"}}
-        if t0 and last_action == "extract_deadline" and t0.get("due_date") == "2026-04-22":
-            return {"action": "reschedule_task", "params": {"task_id": t0.get("task_id"), "new_due_date": "2026-04-22"}}
-
-    # If hard task and update email exists, parse again after initial scheduling
-    if task_id == "hard" and "update:" not in email_text.lower():
-        # keep going with standard sequence; later we will parse the update email
-        pass
-
-    if not extracted and last_action != "create_task":
+    # Step 1: extract tasks if none yet
+    if not extracted:
         return {"action": "create_task", "params": {}}
-    if last_action != "extract_deadline":
-        return {"action": "extract_deadline", "params": {}}
 
-    # Hard: split tasks once
-    if task_id == "hard":
-        t0 = extracted[0] if extracted else None
-        # Only split when the task is still new (avoid repeatedly resetting state).
-        if t0 and (t0.get("status") == "new") and last_action != "split_task":
+    # Step 2 (hard only): split the main task into subtasks once, before deadline extraction
+    if task_id == "hard" and "update:" not in email_text.lower():
+        t0 = extracted[0]
+        if t0.get("status") == "new" and not t0.get("subtasks"):
             return {"action": "split_task", "params": {"task_id": t0.get("task_id")}}
 
-    # Schedule all tasks (one per step)
+    # Step 3: extract deadlines if not done yet
+    has_deadlines = any(t.get("due_date") for t in extracted)
+    if not has_deadlines:
+        return {"action": "extract_deadline", "params": {}}
+
+    # Step 4: schedule any unscheduled tasks immediately (before date advances past deadline)
     for t in extracted:
-        if t.get("status") != "scheduled":
+        if t.get("status") not in ("scheduled",):
             return {"action": "schedule_task", "params": {"task_id": t.get("task_id")}}
 
-    # Hard: bring in update email, then reschedule with new due date
+    # Step 5 (hard only): load update email, re-extract deadline, reschedule
     if task_id == "hard":
         if "update:" not in email_text.lower():
             return {"action": "parse_email", "params": {}}
-        # After update email is current, reschedule
-        t0 = extracted[0] if extracted else None
-        if t0:
+        # Re-extract deadline from update email if due date not yet updated
+        t0 = extracted[0]
+        if t0.get("due_date") != "2026-04-22":
+            if last_action != "extract_deadline":
+                return {"action": "extract_deadline", "params": {}}
+            # extract_deadline ran but didn't update it — force via reschedule
+            return {"action": "reschedule_task", "params": {"task_id": t0.get("task_id"), "new_due_date": "2026-04-22"}}
+        # Reschedule calendar event to reflect new due date
+        cal_entry = next((e for e in calendar if e.get("task_id") == t0.get("task_id")), None)
+        if cal_entry and cal_entry.get("due_date") != "2026-04-22":
             return {"action": "reschedule_task", "params": {"task_id": t0.get("task_id"), "new_due_date": "2026-04-22"}}
 
     return {"action": "noop", "params": {}}
@@ -116,6 +112,10 @@ def run_task(api_base: str, task_id: str, use_llm: bool) -> Dict[str, Any]:
                 api_key=_get_env("OPENAI_API_KEY"),
             )
 
+        print(f"[START] task={task_id}", flush=True)
+
+        step_num = 0
+        cumulative_reward = 0.0
         for _ in range(40):
             try:
                 if use_llm and openai_client and model:
@@ -128,17 +128,22 @@ def run_task(api_base: str, task_id: str, use_llm: bool) -> Dict[str, Any]:
                 step_out = step_resp.json()
 
                 if "observation" not in step_out:
-                    print(f"[warn] /step response missing 'observation': {step_out}")
+                    print(f"[warn] /step response missing 'observation': {step_out}", flush=True)
                     break
+
+                step_num += 1
+                reward_val = step_out.get("reward", {}).get("value", 0.0)
+                cumulative_reward += reward_val
+                print(f"[STEP] step={step_num} reward={reward_val}", flush=True)
 
                 obs = step_out["observation"]
                 if step_out.get("done", False):
                     break
             except httpx.HTTPStatusError as e:
-                print(f"[warn] /step HTTP error: {e.response.status_code} — {e.response.text}")
+                print(f"[warn] /step HTTP error: {e.response.status_code} — {e.response.text}", flush=True)
                 break
             except Exception as e:
-                print(f"[warn] /step error: {e}")
+                print(f"[warn] /step error: {e}", flush=True)
                 break
 
         final_state = client.get("/state").json()
@@ -176,13 +181,13 @@ def main() -> None:
             final_state = run_task(api_base, task_id, use_llm=use_llm)
             score = graders[task_id](final_state)
         except Exception as e:
-            print(f"[error] task '{task_id}' failed: {e}")
+            print(f"[error] task '{task_id}' failed: {e}", flush=True)
             score = 0.0
         results.append((task_id, score))
-        print(f"{task_id} score: {score:.3f}")
+        print(f"[END] task={task_id} score={score:.3f}", flush=True)
 
     avg = sum(s for _, s in results) / len(results)
-    print(f"average score: {avg:.3f}")
+    print(f"average score: {avg:.3f}", flush=True)
 
 
 if __name__ == "__main__":

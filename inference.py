@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,8 +28,8 @@ def _wait_for_server(api_base: str, retries: int = 30, delay: float = 2.0) -> No
         except Exception:
             pass
         time.sleep(delay)
-    print(f"[error] Server did not become ready after {retries * delay:.0f}s — aborting.", flush=True)
-    sys.exit(1)
+    # Don't exit — let the task loop handle connection errors gracefully
+    print(f"[warn] Server may not be ready after {retries * delay:.0f}s — proceeding anyway.", flush=True)
 
 
 def _baseline_policy(obs: Dict[str, Any], task_id: str) -> Dict[str, Any]:
@@ -179,8 +178,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # API_BASE_URL is read as required. If --api-base is provided, it overrides it for the server.
-    api_base_env = _get_env("API_BASE_URL", "http://127.0.0.1:8000")
+    # Determine api_base: --api-base flag > API_BASE_URL env > default to port 7860 (HF Spaces)
+    port = os.getenv("PORT", "7860")
+    api_base_default = f"http://127.0.0.1:{port}"
+    api_base_env = _get_env("API_BASE_URL", api_base_default)
     api_base = args.api_base or api_base_env
     hf_token = _get_env("HF_TOKEN")  # read as required (not used directly here)
     _ = hf_token

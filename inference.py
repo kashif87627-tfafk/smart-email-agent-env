@@ -101,7 +101,9 @@ def _llm_policy(client, model: str, obs: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_task(api_base: str, task_id: str, use_llm: bool) -> Dict[str, Any]:
     with httpx.Client(base_url=api_base, timeout=30.0) as client:
-        obs = client.post("/reset", json={"task_id": task_id}).json()
+        reset_resp = client.post("/reset", json={"task_id": task_id})
+        reset_resp.raise_for_status()
+        obs = reset_resp.json()
 
         openai_client = None
         model = None
@@ -115,14 +117,28 @@ def run_task(api_base: str, task_id: str, use_llm: bool) -> Dict[str, Any]:
             )
 
         for _ in range(40):
-            if use_llm and openai_client and model:
-                action = _llm_policy(openai_client, model, obs)
-            else:
-                action = _baseline_policy(obs, task_id)
+            try:
+                if use_llm and openai_client and model:
+                    action = _llm_policy(openai_client, model, obs)
+                else:
+                    action = _baseline_policy(obs, task_id)
 
-            step_out = client.post("/step", json=action).json()
-            obs = step_out["observation"]
-            if step_out["done"]:
+                step_resp = client.post("/step", json=action)
+                step_resp.raise_for_status()
+                step_out = step_resp.json()
+
+                if "observation" not in step_out:
+                    print(f"[warn] /step response missing 'observation': {step_out}")
+                    break
+
+                obs = step_out["observation"]
+                if step_out.get("done", False):
+                    break
+            except httpx.HTTPStatusError as e:
+                print(f"[warn] /step HTTP error: {e.response.status_code} — {e.response.text}")
+                break
+            except Exception as e:
+                print(f"[warn] /step error: {e}")
                 break
 
         final_state = client.get("/state").json()
@@ -156,8 +172,12 @@ def main() -> None:
 
     results: List[Tuple[str, float]] = []
     for task_id in ["easy", "medium", "hard"]:
-        final_state = run_task(api_base, task_id, use_llm=use_llm)
-        score = graders[task_id](final_state)
+        try:
+            final_state = run_task(api_base, task_id, use_llm=use_llm)
+            score = graders[task_id](final_state)
+        except Exception as e:
+            print(f"[error] task '{task_id}' failed: {e}")
+            score = 0.0
         results.append((task_id, score))
         print(f"{task_id} score: {score:.3f}")
 

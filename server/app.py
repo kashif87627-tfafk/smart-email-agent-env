@@ -33,13 +33,16 @@ def reset(payload: dict | None = None):
 
 @app.post("/step")
 def step(action: Action):
-    obs, reward, done, info = env.step(action)
-    return {
-        "observation": obs.model_dump(),
-        "reward": reward.model_dump(),
-        "done": done,
-        "info": info,
-    }
+    try:
+        obs, reward, done, info = env.step(action)
+        return {
+            "observation": obs.model_dump(),
+            "reward": reward.model_dump(),
+            "done": done,
+            "info": info,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/state")

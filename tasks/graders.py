@@ -77,7 +77,7 @@ def _score_task_and_due(
 
     # weighted
     score = (0.4 * title_score) + (0.3 * due_score) + (0.3 * cal_score)
-    return max(0.0, min(1.0, score))
+    return max(0.01, min(0.99, score))
 
 
 def grade_easy(final_state: Dict) -> float:
@@ -130,5 +130,5 @@ def grade_hard(final_state: Dict) -> float:
     upd_score = 1.0 if update_seen else 0.0
 
     score = (0.7 * base) + (0.2 * sub_score) + (0.1 * upd_score)
-    return max(0.0, min(1.0, score))
+    return max(0.01, min(0.99, score))
 

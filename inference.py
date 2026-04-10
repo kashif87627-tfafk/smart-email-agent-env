@@ -112,7 +112,14 @@ def _llm_policy(client, model: str, obs: Dict[str, Any]) -> Dict[str, Any]:
     return act
 
 
-def run_task(api_base: str, task_id: str, use_llm: bool) -> Tuple[Dict[str, Any], int]:
+def run_task(
+    api_base: str,
+    task_id: str,
+    use_llm: bool,
+    llm_api_key: Optional[str] = None,
+    llm_api_base: Optional[str] = None,
+    llm_model: str = "gpt-4.1-mini",
+) -> Tuple[Dict[str, Any], int]:
     """Run one task episode. Returns (final_state, steps_taken). Never raises."""
     step_num = 0
     try:
@@ -122,19 +129,17 @@ def run_task(api_base: str, task_id: str, use_llm: bool) -> Tuple[Dict[str, Any]
             obs = reset_resp.json()
 
             openai_client = None
-            model = None
-            if use_llm:
+            if use_llm and llm_api_key:
                 from openai import OpenAI
-                model = _get_env("MODEL_NAME", "gpt-4.1-mini")
                 openai_client = OpenAI(
-                    base_url=_get_env("API_BASE_URL"),
-                    api_key=_get_env("OPENAI_API_KEY"),
+                    api_key=llm_api_key,
+                    base_url=llm_api_base,  # None means default OpenAI endpoint
                 )
 
             for _ in range(40):
                 try:
-                    if use_llm and openai_client and model:
-                        action = _llm_policy(openai_client, model, obs)
+                    if use_llm and openai_client:
+                        action = _llm_policy(openai_client, llm_model, obs)
                     else:
                         action = _baseline_policy(obs, task_id)
 
@@ -175,21 +180,27 @@ def main() -> None:
     parser.add_argument(
         "--api-base",
         default=None,
-        help="Server base URL (overrides API_BASE_URL env). Example: http://127.0.0.1:8000",
+        help="Server base URL (overrides ENV_API_BASE_URL env). Example: http://127.0.0.1:8000",
     )
     args = parser.parse_args()
 
-    # Determine api_base: --api-base flag > API_BASE_URL env > default to port 7860 (HF Spaces)
+    # Environment server URL (where the FastAPI env runs)
     port = os.getenv("PORT", "7860")
-    api_base_default = f"http://127.0.0.1:{port}"
-    api_base_env = _get_env("API_BASE_URL", api_base_default)
-    api_base = args.api_base or api_base_env
-    hf_token = _get_env("HF_TOKEN")  # read as required (not used directly here)
-    _ = hf_token
+    env_api_base = args.api_base or _get_env("ENV_API_BASE_URL") or f"http://127.0.0.1:{port}"
 
-    use_llm = bool(_get_env("OPENAI_API_KEY")) or bool(_get_env("API_BASE_URL") and _get_env("MODEL_NAME"))
+    # LLM proxy credentials injected by the validator
+    # Validator injects API_KEY + API_BASE_URL for the LLM proxy (per their instructions)
+    llm_api_key = _get_env("API_KEY") or _get_env("OPENAI_API_KEY")
+    # Use API_BASE_URL as LLM proxy only when API_KEY is present (validator-injected pair)
+    llm_api_base = _get_env("LLM_API_BASE_URL") or _get_env("OPENAI_API_BASE")
+    if llm_api_key and not llm_api_base:
+        llm_api_base = _get_env("API_BASE_URL")
+    llm_model = _get_env("MODEL_NAME", "gpt-4.1-mini")
 
-    _wait_for_server(api_base)
+    # Use LLM if the validator injected API_KEY
+    use_llm = bool(llm_api_key)
+
+    _wait_for_server(env_api_base)
 
     graders = {
         "easy": grade_easy,
@@ -201,7 +212,13 @@ def main() -> None:
     for task_id in ["easy", "medium", "hard"]:
         print(f"[START] task={task_id}", flush=True)
         try:
-            final_state, steps = run_task(api_base, task_id, use_llm=use_llm)
+            final_state, steps = run_task(
+                env_api_base, task_id,
+                use_llm=use_llm,
+                llm_api_key=llm_api_key,
+                llm_api_base=llm_api_base,
+                llm_model=llm_model,
+            )
             score = graders[task_id](final_state) if final_state else 0.0
         except Exception as e:
             print(f"[warn] task '{task_id}' error: {e}", flush=True)

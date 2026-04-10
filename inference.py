@@ -184,20 +184,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Environment server URL (where the FastAPI env runs)
+    # Environment server URL — never read from API_BASE_URL (that's the LLM proxy)
     port = os.getenv("PORT", "7860")
-    env_api_base = args.api_base or _get_env("ENV_API_BASE_URL") or f"http://127.0.0.1:{port}"
+    env_api_base = args.api_base or _get_env("ENV_SERVER_URL") or f"http://127.0.0.1:{port}"
 
-    # LLM proxy credentials injected by the validator
-    # Validator injects API_KEY + API_BASE_URL for the LLM proxy (per their instructions)
-    llm_api_key = _get_env("API_KEY") or _get_env("OPENAI_API_KEY")
-    # Use API_BASE_URL as LLM proxy only when API_KEY is present (validator-injected pair)
-    llm_api_base = _get_env("LLM_API_BASE_URL") or _get_env("OPENAI_API_BASE")
-    if llm_api_key and not llm_api_base:
-        llm_api_base = _get_env("API_BASE_URL")
+    # LLM proxy — validator always injects API_KEY and API_BASE_URL
+    llm_api_key = os.environ.get("API_KEY") or os.environ.get("OPENAI_API_KEY")
+    llm_api_base = os.environ.get("API_BASE_URL")
     llm_model = _get_env("MODEL_NAME", "gpt-4.1-mini")
 
-    # Use LLM if the validator injected API_KEY
+    # Always use LLM when API_KEY is present
     use_llm = bool(llm_api_key)
 
     _wait_for_server(env_api_base)

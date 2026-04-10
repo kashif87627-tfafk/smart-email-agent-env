@@ -112,59 +112,60 @@ def _llm_policy(client, model: str, obs: Dict[str, Any]) -> Dict[str, Any]:
     return act
 
 
-def run_task(api_base: str, task_id: str, use_llm: bool) -> Dict[str, Any]:
-    with httpx.Client(base_url=api_base, timeout=30.0) as client:
-        reset_resp = client.post("/reset", json={"task_id": task_id})
-        reset_resp.raise_for_status()
-        obs = reset_resp.json()
+def run_task(api_base: str, task_id: str, use_llm: bool) -> Tuple[Dict[str, Any], int]:
+    """Run one task episode. Returns (final_state, steps_taken). Never raises."""
+    step_num = 0
+    try:
+        with httpx.Client(base_url=api_base, timeout=30.0) as client:
+            reset_resp = client.post("/reset", json={"task_id": task_id})
+            reset_resp.raise_for_status()
+            obs = reset_resp.json()
 
-        openai_client = None
-        model = None
-        if use_llm:
-            from openai import OpenAI
+            openai_client = None
+            model = None
+            if use_llm:
+                from openai import OpenAI
+                model = _get_env("MODEL_NAME", "gpt-4.1-mini")
+                openai_client = OpenAI(
+                    base_url=_get_env("API_BASE_URL"),
+                    api_key=_get_env("OPENAI_API_KEY"),
+                )
 
-            model = _get_env("MODEL_NAME", "gpt-4.1-mini")
-            openai_client = OpenAI(
-                base_url=_get_env("API_BASE_URL"),
-                api_key=_get_env("OPENAI_API_KEY"),
-            )
+            for _ in range(40):
+                try:
+                    if use_llm and openai_client and model:
+                        action = _llm_policy(openai_client, model, obs)
+                    else:
+                        action = _baseline_policy(obs, task_id)
 
-        print(f"[START] task={task_id}", flush=True)
+                    step_resp = client.post("/step", json=action)
+                    step_resp.raise_for_status()
+                    step_out = step_resp.json()
 
-        step_num = 0
-        cumulative_reward = 0.0
-        for _ in range(40):
-            try:
-                if use_llm and openai_client and model:
-                    action = _llm_policy(openai_client, model, obs)
-                else:
-                    action = _baseline_policy(obs, task_id)
+                    if "observation" not in step_out:
+                        print(f"[warn] /step response missing 'observation': {step_out}", flush=True)
+                        break
 
-                step_resp = client.post("/step", json=action)
-                step_resp.raise_for_status()
-                step_out = step_resp.json()
+                    step_num += 1
+                    reward_val = step_out.get("reward", {}).get("value", 0.0)
+                    print(f"[STEP] step={step_num} reward={reward_val}", flush=True)
 
-                if "observation" not in step_out:
-                    print(f"[warn] /step response missing 'observation': {step_out}", flush=True)
+                    obs = step_out["observation"]
+                    if step_out.get("done", False):
+                        break
+                except httpx.HTTPStatusError as e:
+                    print(f"[warn] /step HTTP error: {e.response.status_code}", flush=True)
+                    break
+                except Exception as e:
+                    print(f"[warn] /step error: {e}", flush=True)
                     break
 
-                step_num += 1
-                reward_val = step_out.get("reward", {}).get("value", 0.0)
-                cumulative_reward += reward_val
-                print(f"[STEP] step={step_num} reward={reward_val}", flush=True)
+            final_state = client.get("/state").json()
+            return final_state, step_num
 
-                obs = step_out["observation"]
-                if step_out.get("done", False):
-                    break
-            except httpx.HTTPStatusError as e:
-                print(f"[warn] /step HTTP error: {e.response.status_code} — {e.response.text}", flush=True)
-                break
-            except Exception as e:
-                print(f"[warn] /step error: {e}", flush=True)
-                break
-
-        final_state = client.get("/state").json()
-        return final_state
+    except Exception as e:
+        print(f"[warn] run_task failed for '{task_id}': {e}", flush=True)
+        return {}, step_num
 
 
 def main() -> None:
@@ -198,14 +199,16 @@ def main() -> None:
 
     results: List[Tuple[str, float]] = []
     for task_id in ["easy", "medium", "hard"]:
+        print(f"[START] task={task_id}", flush=True)
         try:
-            final_state = run_task(api_base, task_id, use_llm=use_llm)
-            score = graders[task_id](final_state)
+            final_state, steps = run_task(api_base, task_id, use_llm=use_llm)
+            score = graders[task_id](final_state) if final_state else 0.0
         except Exception as e:
-            print(f"[error] task '{task_id}' failed: {e}", flush=True)
+            print(f"[warn] task '{task_id}' error: {e}", flush=True)
             score = 0.0
+            steps = 0
         results.append((task_id, score))
-        print(f"[END] task={task_id} score={score:.3f}", flush=True)
+        print(f"[END] task={task_id} score={score:.3f} steps={steps}", flush=True)
 
     avg = sum(s for _, s in results) / len(results)
     print(f"average score: {avg:.3f}", flush=True)
